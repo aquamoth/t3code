@@ -1198,6 +1198,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "threadId" in input
             ? (yield* execute({
                 operation: "GitVcsDriver.checkpoints.listThreadRefs",
+                outputMode: "error",
                 cwd: input.cwd,
                 args: [
                   "for-each-ref",
@@ -1215,7 +1216,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
               cwd: input.cwd,
               args: ["update-ref", "-d", checkpointRef],
-              allowNonZeroExit: true,
             }),
           { discard: true },
         );
