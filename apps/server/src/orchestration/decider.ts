@@ -416,7 +416,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const project = yield* requireProject({ readModel, command, projectId: thread.projectId });
+      const project = readModel.projects.find((entry) => entry.id === thread.projectId);
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -429,7 +429,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           deletedAt: occurredAt,
-          workspaceRoot: project.workspaceRoot,
+          ...(project ? { workspaceRoot: project.workspaceRoot } : {}),
         },
       };
     }

@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -292,6 +293,7 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly onLog?: (message: unknown) => void;
     readonly beforeCheckpointLookup?: Effect.Effect<void>;
     readonly checkpointLookupFailure?: (
       cwd: string,
@@ -405,7 +407,17 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(NodeServices.layer),
     );
 
-    runtime = ManagedRuntime.make(layer);
+    runtime = ManagedRuntime.make(
+      options?.onLog
+        ? layer.pipe(
+            Layer.provide(
+              Logger.layer([Logger.make(({ message }) => options.onLog?.(message))], {
+                mergeWithExisting: false,
+              }),
+            ),
+          )
+        : layer,
+    );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(CheckpointReactor));
@@ -627,6 +639,31 @@ describe("CheckpointReactor", () => {
           }),
         ).toContain(checkpointRef);
       }),
+  );
+
+  effectIt.effect("deletes a thread in a non-Git workspace without a cleanup warning", () =>
+    Effect.gen(function* () {
+      const logs: unknown[] = [];
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          initializeGit: false,
+          seedFilesystemCheckpoints: false,
+          onLog: (message) => logs.push(message),
+        }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("delete-non-git"),
+        threadId,
+      });
+      yield* harness.drainThrough(deleted.sequence);
+      const model = yield* Effect.promise(harness.readModel);
+      expect(
+        model.threads.some((thread) => thread.id === threadId && thread.deletedAt === null),
+      ).toBe(false);
+      expect(logs.flat()).not.toContain("checkpoint reactor failed to process input");
+    }),
   );
 
   effectIt.effect.each([null, "/missing/deleted-worktree"])(

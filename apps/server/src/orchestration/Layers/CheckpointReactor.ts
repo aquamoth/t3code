@@ -921,6 +921,7 @@ const make = Effect.gen(function* () {
       startedTurns.delete(threadId);
       pending.delete(threadId);
       if (!event.payload.workspaceRoot) return;
+      if (!(yield* checkpointStore.isGitRepository(event.payload.workspaceRoot))) return;
       // Use the deleted incarnation's repository even if this id has already
       // been recreated. Linked worktree refs live in the project repository.
       yield* checkpointStore.deleteCheckpointRefs({
