@@ -519,6 +519,61 @@ describe("CheckpointReactor", () => {
     };
   }
 
+  effectIt.effect.each([null, "/missing/deleted-worktree"])(
+    "deletes checkpoint refs from the project repository with worktree %s",
+    (threadWorktreePath) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness({ threadWorktreePath }));
+        const otherRef = checkpointRefForThreadTurn(ThreadId.make("thread-2"), 0);
+        NodeChildProcess.execFileSync("git", ["update-ref", otherRef, "HEAD"], {
+          cwd: harness.cwd,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-delete-checkpoints"),
+          threadId: ThreadId.make("thread-1"),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(
+          NodeChildProcess.execFileSync(
+            "git",
+            ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
+            { cwd: harness.cwd, encoding: "utf8" },
+          ).trim(),
+        ).toBe(otherRef);
+      }),
+  );
+
+  effectIt.effect(
+    "preserves archived checkpoints and removes them when the project is deleted",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const refs = () =>
+          NodeChildProcess.execFileSync(
+            "git",
+            ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
+            { cwd: harness.cwd, encoding: "utf8" },
+          ).trim();
+        const before = refs();
+        yield* harness.engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-archive-checkpoints"),
+          threadId: ThreadId.make("thread-1"),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(refs()).toBe(before);
+        yield* harness.engine.dispatch({
+          type: "project.delete",
+          commandId: CommandId.make("cmd-delete-project-checkpoints"),
+          projectId: asProjectId("project-1"),
+          force: true,
+        });
+        yield* Effect.promise(harness.drain);
+        expect(refs()).toBe("");
+      }),
+  );
+
   effectIt.effect.each([
     "active",
     "archived",

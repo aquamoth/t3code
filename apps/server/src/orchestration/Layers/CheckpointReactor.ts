@@ -915,6 +915,23 @@ const make = Effect.gen(function* () {
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
+    if (event.type === "thread.deleted") {
+      const { threadId } = event.payload;
+      startedTurns.delete(threadId);
+      pending.delete(threadId);
+      const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(threadId, {
+        deletedOnly: true,
+      });
+      if (Option.isNone(context)) return;
+      // Linked worktrees share refs with the project repository, which remains
+      // available after a thread's worktree has been removed.
+      yield* checkpointStore.deleteCheckpointRefs({
+        cwd: context.value.workspaceRoot,
+        threadId,
+      });
+      return;
+    }
+
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
@@ -1034,7 +1051,8 @@ const make = Effect.gen(function* () {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested"
+          event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.deleted"
         ) {
           return Effect.void;
         }

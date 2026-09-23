@@ -1219,9 +1219,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const getThreadCheckpointContextThreadRow = SqlSchema.findOneOption({
-    Request: ThreadIdLookupInput,
+    Request: Schema.Struct({ threadId: ThreadId, deletedOnly: Schema.Boolean }),
     Result: ProjectionThreadCheckpointContextThreadRowSchema,
-    execute: ({ threadId }) =>
+    execute: ({ threadId, deletedOnly }) =>
       sql`
         SELECT
           threads.thread_id AS "threadId",
@@ -1232,7 +1232,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         INNER JOIN projection_projects AS projects
           ON projects.project_id = threads.project_id
         WHERE threads.thread_id = ${threadId}
-          AND threads.deleted_at IS NULL
+          AND ${deletedOnly ? sql`threads.deleted_at IS NOT NULL` : sql`threads.deleted_at IS NULL`}
         LIMIT 1
       `,
   });
@@ -3121,9 +3121,13 @@ pending_approval_requests AS (
 
   const getThreadCheckpointContext: ProjectionSnapshotQueryShape["getThreadCheckpointContext"] = (
     threadId,
+    options,
   ) =>
     Effect.gen(function* () {
-      const threadRow = yield* getThreadCheckpointContextThreadRow({ threadId }).pipe(
+      const threadRow = yield* getThreadCheckpointContextThreadRow({
+        threadId,
+        deletedOnly: options?.deletedOnly ?? false,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadCheckpointContext:getThread:query",

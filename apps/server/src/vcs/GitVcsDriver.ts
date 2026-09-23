@@ -37,6 +37,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import { checkpointRefPrefixForThread } from "../checkpointing/Utils.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -1193,8 +1194,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
+        const checkpointRefs =
+          "threadId" in input
+            ? (yield* execute({
+                operation: "GitVcsDriver.checkpoints.listThreadRefs",
+                cwd: input.cwd,
+                args: [
+                  "for-each-ref",
+                  "--format=%(refname)",
+                  checkpointRefPrefixForThread(input.threadId),
+                ],
+              })).stdout
+                .split("\n")
+                .filter(Boolean)
+            : input.checkpointRefs;
         yield* Effect.forEach(
-          input.checkpointRefs,
+          checkpointRefs,
           (checkpointRef) =>
             execute({
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",

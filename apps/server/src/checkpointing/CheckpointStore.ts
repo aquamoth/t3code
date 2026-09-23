@@ -13,7 +13,11 @@
  *
  * @module CheckpointStore
  */
-import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
+import {
+  VcsUnsupportedOperationError,
+  type CheckpointRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -42,10 +46,10 @@ export interface DiffCheckpointsInput {
   readonly format?: "patch" | "numstat";
 }
 
-export interface DeleteCheckpointRefsInput {
-  readonly cwd: string;
-  readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
-}
+export type DeleteCheckpointRefsInput = { readonly cwd: string } & (
+  | { readonly checkpointRefs: ReadonlyArray<CheckpointRef> }
+  | { readonly threadId: ThreadId }
+);
 
 /** Service tag for checkpoint persistence and restore operations. */
 export class CheckpointStore extends Context.Service<
@@ -88,7 +92,7 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<string, CheckpointStoreError>;
 
     /**
-     * Delete the provided checkpoint refs.
+     * Delete the provided checkpoint refs, or all refs belonging to a thread.
      *
      * Best-effort delete: missing refs are tolerated.
      */
