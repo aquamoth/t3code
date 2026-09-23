@@ -42,6 +42,7 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
+import { ServerActivation } from "../../serverActivation.ts";
 import { CheckpointReactorLive } from "./CheckpointReactor.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
@@ -297,6 +298,7 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly activation?: Effect.Effect<void>;
     readonly onLog?: (message: unknown) => void;
     readonly beforeCheckpointLookup?: Effect.Effect<void>;
     readonly checkpointLookupFailure?: (
@@ -439,7 +441,12 @@ describe("CheckpointReactor", () => {
         yield* Stream.runForEach(receiptBus.streamEventsForTest, (receipt) =>
           Queue.offer(receipts, receipt),
         ).pipe(Effect.forkIn(testScope, { startImmediately: true }));
-        yield* reactor.start().pipe(Scope.provide(testScope));
+        yield* reactor
+          .start()
+          .pipe(
+            Effect.provideService(ServerActivation, options?.activation),
+            Scope.provide(testScope),
+          );
         return receipts;
       }),
     );
@@ -538,6 +545,23 @@ describe("CheckpointReactor", () => {
       pullRequestRefreshes,
     };
   }
+
+  effectIt.effect("cleans deletions received while waiting for server activation", () =>
+    Effect.gen(function* () {
+      const activation = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({ activation: Deferred.await(activation) }),
+      );
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("startup-delete"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      yield* Deferred.succeed(activation, undefined);
+      yield* harness.drainThrough(deleted.sequence);
+      expect(listCheckpointRefs(harness.cwd)).toBe("");
+    }),
+  );
 
   effectIt.effect("a sequence fence does not wait for later checkpoint work or deletions", () =>
     Effect.gen(function* () {

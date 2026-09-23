@@ -1070,11 +1070,13 @@ const make = Effect.gen(function* () {
   });
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
+    // Runs before activation, so nothing commits between reading the head and
+    // subscribing; the parked consumer then sees every later event.
+    yield* orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen));
+    const events = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
       Stream.runForEach(
-        orchestrationEngine.streamDomainEvents.pipe(
-          Stream.onStart(orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen))),
-        ),
+        events,
         Effect.fnUntraced(function* (event) {
           if (event.type === "thread.deleted") {
             yield* SubscriptionRef.update(pendingDeletions, (pending) => [
