@@ -20,6 +20,7 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
@@ -919,14 +920,11 @@ const make = Effect.gen(function* () {
       const { threadId } = event.payload;
       startedTurns.delete(threadId);
       pending.delete(threadId);
-      const context = yield* projectionSnapshotQuery.getThreadCheckpointContext(threadId, {
-        deletedOnly: true,
-      });
-      if (Option.isNone(context)) return;
-      // Linked worktrees share refs with the project repository, which remains
-      // available after a thread's worktree has been removed.
+      if (!event.payload.workspaceRoot) return;
+      // Use the deleted incarnation's repository even if this id has already
+      // been recreated. Linked worktree refs live in the project repository.
       yield* checkpointStore.deleteCheckpointRefs({
-        cwd: context.value.workspaceRoot,
+        cwd: event.payload.workspaceRoot,
         threadId,
       });
       return;
@@ -1044,20 +1042,35 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
+  const seenSequence = yield* SubscriptionRef.make(0);
+  const noteSeen = (sequence: number) =>
+    SubscriptionRef.update(seenSequence, (seen) => Math.max(seen, sequence));
+
+  const drainThrough: CheckpointReactorShape["drainThrough"] = Effect.fn(
+    "CheckpointReactor.drainThrough",
+  )(function* (sequence) {
+    yield* SubscriptionRef.changes(seenSequence).pipe(
+      Stream.filter((seen) => seen >= sequence),
+      Stream.runHead,
+    );
+    yield* worker.drain;
+  });
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (
-          event.type !== "thread.turn-start-requested" &&
-          event.type !== "thread.message-sent" &&
-          event.type !== "thread.checkpoint-revert-requested" &&
-          event.type !== "thread.deleted"
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "domain", event });
-      }),
+      Stream.runForEach(
+        orchestrationEngine.streamDomainEvents.pipe(
+          Stream.onStart(orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen))),
+        ),
+        (event) =>
+          (event.type === "thread.turn-start-requested" ||
+          event.type === "thread.message-sent" ||
+          event.type === "thread.checkpoint-revert-requested" ||
+          event.type === "thread.deleted"
+            ? worker.enqueue({ source: "domain", event })
+            : Effect.void
+          ).pipe(Effect.andThen(noteSeen(event.sequence))),
+      ),
     );
 
     yield* forkParked(
@@ -1077,6 +1090,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
+    drainThrough,
     drain: worker.drain.pipe(
       Effect.andThen(statusRefreshWorker.drain),
       Effect.andThen(entryRefreshWorker.drain),

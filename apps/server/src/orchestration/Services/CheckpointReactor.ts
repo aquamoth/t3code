@@ -30,6 +30,9 @@ export interface CheckpointReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Wait for domain events through this sequence and their checkpoint work before reusing a thread id. */
+  readonly drainThrough: (sequence: number) => Effect.Effect<void>;
 }
 
 /**

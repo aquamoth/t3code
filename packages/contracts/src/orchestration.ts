@@ -1762,6 +1762,8 @@ export const ThreadCreatedPayload = Schema.Struct({
 
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
+  // Older events predate checkpoint cleanup; never infer their repository from a reused id.
+  workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   deletedAt: IsoDateTime,
 });
 
