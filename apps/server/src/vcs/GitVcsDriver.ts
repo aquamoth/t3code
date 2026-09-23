@@ -1216,6 +1216,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
               cwd: input.cwd,
               args: ["update-ref", "-d", checkpointRef],
+              // Enumerated refs exist, so a failed delete is a real error such as a lock.
+              // Rewind passes refs from the read model and stays best-effort, as before.
               allowNonZeroExit: "checkpointRefs" in input,
             }),
           { discard: true },

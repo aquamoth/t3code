@@ -917,17 +917,14 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.deleted") {
-      const { threadId } = event.payload;
+      const { threadId, workspaceRoot } = event.payload;
       startedTurns.delete(threadId);
       pending.delete(threadId);
-      if (!event.payload.workspaceRoot) return;
-      if (!(yield* checkpointStore.isGitRepository(event.payload.workspaceRoot))) return;
       // Use the deleted incarnation's repository even if this id has already
       // been recreated. Linked worktree refs live in the project repository.
-      yield* checkpointStore.deleteCheckpointRefs({
-        cwd: event.payload.workspaceRoot,
-        threadId,
-      });
+      if (workspaceRoot && (yield* checkpointStore.isGitRepository(workspaceRoot))) {
+        yield* checkpointStore.deleteCheckpointRefs({ cwd: workspaceRoot, threadId });
+      }
       return;
     }
 
@@ -1078,18 +1075,23 @@ const make = Effect.gen(function* () {
       Stream.runForEach(
         events,
         Effect.fnUntraced(function* (event) {
+          // Register a deletion before it can complete, and advance the watermark
+          // only after the handoff, so drainThrough never passes a deletion it
+          // cannot see.
           if (event.type === "thread.deleted") {
             yield* SubscriptionRef.update(pendingDeletions, (pending) => [
               ...pending,
               event.sequence,
             ]);
           }
-          yield* event.type === "thread.turn-start-requested" ||
-          event.type === "thread.message-sent" ||
-          event.type === "thread.checkpoint-revert-requested" ||
-          event.type === "thread.deleted"
-            ? worker.enqueue({ source: "domain", event })
-            : Effect.void;
+          if (
+            event.type === "thread.turn-start-requested" ||
+            event.type === "thread.message-sent" ||
+            event.type === "thread.checkpoint-revert-requested" ||
+            event.type === "thread.deleted"
+          ) {
+            yield* worker.enqueue({ source: "domain", event });
+          }
           yield* noteSeen(event.sequence);
         }),
       ),
