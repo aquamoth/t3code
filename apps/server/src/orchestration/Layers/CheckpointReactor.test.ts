@@ -602,6 +602,33 @@ describe("CheckpointReactor", () => {
       }),
   );
 
+  effectIt.effect(
+    "a locked checkpoint ref does not prevent thread deletion or draining cleanup",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = ThreadId.make("thread-1");
+        const checkpointRef = checkpointRefForThreadTurn(threadId, 0);
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, ".git", `${checkpointRef}.lock`), "");
+        const deleted = yield* harness.engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-delete-with-locked-checkpoint"),
+          threadId,
+        });
+        yield* harness.drainThrough(deleted.sequence);
+        const model = yield* Effect.promise(harness.readModel);
+        expect(
+          model.threads.some((thread) => thread.id === threadId && thread.deletedAt === null),
+        ).toBe(false);
+        expect(
+          NodeChildProcess.execFileSync("git", ["show-ref", "--verify", checkpointRef], {
+            cwd: harness.cwd,
+            encoding: "utf8",
+          }),
+        ).toContain(checkpointRef);
+      }),
+  );
+
   effectIt.effect.each([null, "/missing/deleted-worktree"])(
     "deletes checkpoint refs from the project repository with worktree %s",
     (threadWorktreePath) =>

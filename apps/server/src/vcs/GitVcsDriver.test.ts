@@ -1150,7 +1150,7 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
-it.effect("checkpoint deletion surfaces lock errors and tolerates missing refs", () =>
+it.effect("thread cleanup surfaces lock errors while rewind cleanup remains best-effort", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1166,6 +1166,8 @@ it.effect("checkpoint deletion surfaces lock errors and tolerates missing refs",
       .deleteCheckpointRefs({ cwd, threadId })
       .pipe(Effect.result);
     assert.strictEqual(result._tag, "Failure");
+    assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: [checkpointRef] });
     assert.isTrue(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
     yield* fs.remove(lock);
     yield* driver.checkpoints.deleteCheckpointRefs({ cwd, threadId });
