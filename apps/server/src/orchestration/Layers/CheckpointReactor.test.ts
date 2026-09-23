@@ -235,6 +235,10 @@ function createGitRepository() {
   return cwd;
 }
 
+function listCheckpointRefs(cwd: string): string {
+  return runGit(cwd, ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"]).trim();
+}
+
 function gitRefExists(cwd: string, ref: string): boolean {
   try {
     runGit(cwd, ["show-ref", "--verify", "--quiet", ref]);
@@ -535,6 +539,41 @@ describe("CheckpointReactor", () => {
     };
   }
 
+  effectIt.effect("a sequence fence does not wait for later checkpoint work or deletions", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          beforeCheckpointLookup: Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+          ),
+        }),
+      );
+      const sequence = yield* harness.engine.latestSequence;
+      yield* harness.drainThrough(sequence);
+      harness.provider.emit({
+        type: "turn.started",
+        eventId: EventId.make("later-start"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("later-turn"),
+      });
+      yield* Deferred.await(entered);
+      const deleted = yield* harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("later-delete"),
+        threadId: ThreadId.make("thread-1"),
+      });
+      // This must finish while the later capture and deletion are still blocked.
+      yield* harness
+        .drainThrough(sequence)
+        .pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      yield* harness.drainThrough(deleted.sequence);
+    }),
+  );
+
   effectIt.effect.each([false, true])(
     "cleans the old incarnation before a reused id starts, different project=%s",
     (differentProject) =>
@@ -591,13 +630,7 @@ describe("CheckpointReactor", () => {
         });
         yield* Deferred.succeed(release, undefined);
         yield* harness.drainThrough(created.sequence);
-        expect(
-          NodeChildProcess.execFileSync(
-            "git",
-            ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
-            { cwd: harness.cwd, encoding: "utf8" },
-          ).trim(),
-        ).toBe("");
+        expect(listCheckpointRefs(harness.cwd)).toBe("");
         NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "new incarnation\n");
         harness.provider.emit({
           type: "turn.started",
@@ -632,12 +665,7 @@ describe("CheckpointReactor", () => {
         expect(
           model.threads.some((thread) => thread.id === threadId && thread.deletedAt === null),
         ).toBe(false);
-        expect(
-          NodeChildProcess.execFileSync("git", ["show-ref", "--verify", checkpointRef], {
-            cwd: harness.cwd,
-            encoding: "utf8",
-          }),
-        ).toContain(checkpointRef);
+        expect(gitRefExists(harness.cwd, checkpointRef)).toBe(true);
       }),
   );
 
@@ -672,22 +700,14 @@ describe("CheckpointReactor", () => {
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() => createHarness({ threadWorktreePath }));
         const otherRef = checkpointRefForThreadTurn(ThreadId.make("thread-2"), 0);
-        NodeChildProcess.execFileSync("git", ["update-ref", otherRef, "HEAD"], {
-          cwd: harness.cwd,
-        });
+        runGit(harness.cwd, ["update-ref", otherRef, "HEAD"]);
         yield* harness.engine.dispatch({
           type: "thread.delete",
           commandId: CommandId.make("cmd-delete-checkpoints"),
           threadId: ThreadId.make("thread-1"),
         });
         yield* Effect.promise(harness.drain);
-        expect(
-          NodeChildProcess.execFileSync(
-            "git",
-            ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
-            { cwd: harness.cwd, encoding: "utf8" },
-          ).trim(),
-        ).toBe(otherRef);
+        expect(listCheckpointRefs(harness.cwd)).toBe(otherRef);
       }),
   );
 
@@ -696,20 +716,14 @@ describe("CheckpointReactor", () => {
     () =>
       Effect.gen(function* () {
         const harness = yield* Effect.promise(() => createHarness());
-        const refs = () =>
-          NodeChildProcess.execFileSync(
-            "git",
-            ["for-each-ref", "--format=%(refname)", "refs/t3/checkpoints/"],
-            { cwd: harness.cwd, encoding: "utf8" },
-          ).trim();
-        const before = refs();
+        const before = listCheckpointRefs(harness.cwd);
         yield* harness.engine.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("cmd-archive-checkpoints"),
           threadId: ThreadId.make("thread-1"),
         });
         yield* Effect.promise(harness.drain);
-        expect(refs()).toBe(before);
+        expect(listCheckpointRefs(harness.cwd)).toBe(before);
         yield* harness.engine.dispatch({
           type: "project.delete",
           commandId: CommandId.make("cmd-delete-project-checkpoints"),
@@ -717,7 +731,7 @@ describe("CheckpointReactor", () => {
           force: true,
         });
         yield* Effect.promise(harness.drain);
-        expect(refs()).toBe("");
+        expect(listCheckpointRefs(harness.cwd)).toBe("");
       }),
   );
 

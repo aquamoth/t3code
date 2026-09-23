@@ -1028,6 +1028,8 @@ const make = Effect.gen(function* () {
   > =>
     input.source === "domain" ? processDomainEvent(input.event) : processRuntimeEvent(input.event);
 
+  const pendingDeletions = yield* SubscriptionRef.make<ReadonlyArray<number>>([]);
+
   const processInputSafely = (input: ReactorInput) =>
     processInput(input).pipe(
       Effect.catchCause((cause) => {
@@ -1040,6 +1042,13 @@ const make = Effect.gen(function* () {
           cause: Cause.pretty(cause),
         });
       }),
+      Effect.ensuring(
+        input.source === "domain" && input.event.type === "thread.deleted"
+          ? SubscriptionRef.update(pendingDeletions, (pending) =>
+              pending.filter((sequence) => sequence !== input.event.sequence),
+            )
+          : Effect.void,
+      ),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
@@ -1054,7 +1063,10 @@ const make = Effect.gen(function* () {
       Stream.filter((seen) => seen >= sequence),
       Stream.runHead,
     );
-    yield* worker.drain;
+    yield* SubscriptionRef.changes(pendingDeletions).pipe(
+      Stream.filter((pending) => pending.every((deletion) => deletion > sequence)),
+      Stream.runHead,
+    );
   });
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
@@ -1063,14 +1075,21 @@ const make = Effect.gen(function* () {
         orchestrationEngine.streamDomainEvents.pipe(
           Stream.onStart(orchestrationEngine.latestSequence.pipe(Effect.flatMap(noteSeen))),
         ),
-        (event) =>
-          (event.type === "thread.turn-start-requested" ||
+        Effect.fnUntraced(function* (event) {
+          if (event.type === "thread.deleted") {
+            yield* SubscriptionRef.update(pendingDeletions, (pending) => [
+              ...pending,
+              event.sequence,
+            ]);
+          }
+          yield* event.type === "thread.turn-start-requested" ||
           event.type === "thread.message-sent" ||
           event.type === "thread.checkpoint-revert-requested" ||
           event.type === "thread.deleted"
             ? worker.enqueue({ source: "domain", event })
-            : Effect.void
-          ).pipe(Effect.andThen(noteSeen(event.sequence))),
+            : Effect.void;
+          yield* noteSeen(event.sequence);
+        }),
       ),
     );
 
