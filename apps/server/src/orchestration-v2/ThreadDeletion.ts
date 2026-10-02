@@ -1,4 +1,5 @@
 import type {
+  CheckpointRef,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
@@ -19,7 +20,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
+    | "thread"
+    | "runs"
+    | "attempts"
+    | "nodes"
+    | "runtimeRequests"
+    | "subagents"
+    | "providerSessions"
+    | "checkpointScopes"
+    | "checkpoints"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
@@ -222,6 +231,31 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       commandId: command.commandId,
       threadId: command.threadId,
       request: { type: "attachment.cleanup", attachmentIds },
+    });
+  }
+  // Checkpoint refs live in the repository, not the thread, so nothing else
+  // removes them. Group by scope cwd: a worktree thread's refs are shared with
+  // the project repository, and the worktree outlives every queued effect.
+  const checkpointRefsByCwd = new Map<string, Set<CheckpointRef>>();
+  for (const checkpoint of projection.checkpoints) {
+    const scope = projection.checkpointScopes.find((entry) => entry.id === checkpoint.scopeId);
+    if (scope === undefined) continue;
+    const refs = checkpointRefsByCwd.get(scope.cwd) ?? new Set<CheckpointRef>();
+    refs.add(checkpoint.ref);
+    checkpointRefsByCwd.set(scope.cwd, refs);
+  }
+  if (checkpointRefsByCwd.size > 0) {
+    effects.push({
+      id: `effect:${command.commandId}:checkpoint.cleanup`,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      request: {
+        type: "checkpoint.cleanup",
+        targets: [...checkpointRefsByCwd].map(([cwd, refs]) => ({
+          cwd,
+          checkpointRefs: [...refs],
+        })),
+      },
     });
   }
   return { events, effects };

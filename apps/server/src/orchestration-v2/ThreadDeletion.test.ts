@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EventId,
   MessageId,
@@ -222,6 +225,7 @@ it.effect("cancels active work without reviving a run while disposing delegated 
       (event) => event.type === "run.updated" && event.payload.id === queuedRun.id,
     );
     assert.lengthOf(queuedRunUpdates, 1);
+    assert.isFalse(plan.effects.some((effect) => effect.request.type === "checkpoint.cleanup"));
   }).pipe(Effect.provide(IdAllocator.layer)),
 );
 
@@ -265,6 +269,39 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         createdAt,
         updatedAt: createdAt,
       })),
+      checkpointScopes: ["root", "subagent"].map((name, index) => ({
+        id: CheckpointScopeId.make(`scope:delete-plan:${name}`),
+        threadId,
+        runId: base.runs[index]!.id,
+        nodeId: base.runs[index]!.rootNodeId!,
+        parentScopeId: null,
+        providerThreadId,
+        kind: index === 0 ? "root_run" : "subagent",
+        ordinalWithinParent: 0,
+        advancesAppRunCount: index === 0,
+        cwd: index === 0 ? "/workspace/feature" : "/workspace/feature/packages/sub",
+        createdAt,
+      })),
+      checkpoints: [
+        ["root", 0, "ready"],
+        ["root", 1, "missing"],
+        ["root", 1, "stale"],
+        ["subagent", 0, "ready"],
+        ["orphan", 0, "ready"],
+      ].map(([name, ordinal, status]) => ({
+        id: CheckpointId.make(`checkpoint:delete-plan:${name}:${ordinal}:${status}`),
+        threadId,
+        scopeId: CheckpointScopeId.make(`scope:delete-plan:${name}`),
+        runId: null,
+        nodeId: base.runs[0]!.rootNodeId!,
+        parentCheckpointId: null,
+        ordinalWithinScope: ordinal as number,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make(`refs/t3/orchestration-v2/checkpoints/${name}/ordinal/${ordinal}`),
+        status: status as "ready" | "missing" | "stale",
+        files: [],
+        capturedAt: createdAt,
+      })),
     };
     const plan = yield* planThreadDeletion({
       command,
@@ -292,6 +329,26 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         },
         { type: "terminal.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
+        // Every recorded ref is listed once per repository cwd, whatever its
+        // status, and a checkpoint whose scope is unknown has no cwd to clean.
+        {
+          type: "checkpoint.cleanup",
+          targets: [
+            {
+              cwd: "/workspace/feature",
+              checkpointRefs: [
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/0"),
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/1"),
+              ],
+            },
+            {
+              cwd: "/workspace/feature/packages/sub",
+              checkpointRefs: [
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/subagent/ordinal/0"),
+              ],
+            },
+          ],
+        },
       ],
     );
   }).pipe(Effect.provide(IdAllocator.layer)),

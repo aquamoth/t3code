@@ -457,6 +457,8 @@ it.effect("deletes a project without force once its imported threads were delete
           "runtimeRequests",
           "subagents",
           "providerSessions",
+          "checkpointScopes",
+          "checkpoints",
         ]),
         attachmentIds: [],
         now,

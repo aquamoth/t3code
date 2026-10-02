@@ -1,5 +1,6 @@
 import {
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   CommandId,
   MessageId,
@@ -96,6 +97,12 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     attachmentIds: Schema.Array(Schema.String),
   }),
   Schema.Struct({
+    type: Schema.Literal("checkpoint.cleanup"),
+    targets: Schema.Array(
+      Schema.Struct({ cwd: Schema.String, checkpointRefs: Schema.Array(CheckpointRef) }),
+    ),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
       Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
@@ -112,6 +119,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "attachment.cleanup",
+  "checkpoint.cleanup",
   "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 

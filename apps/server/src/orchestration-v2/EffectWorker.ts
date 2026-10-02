@@ -430,6 +430,17 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
+          case "checkpoint.cleanup":
+            return resourceCleanup.cleanupCheckpointRefs(effect.request.targets).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({

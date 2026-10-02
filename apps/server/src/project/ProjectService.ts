@@ -413,6 +413,8 @@ export const make = Effect.gen(function* () {
       "runtimeRequests",
       "subagents",
       "providerSessions",
+      "checkpointScopes",
+      "checkpoints",
     ]);
     if (projection.thread.deletedAt !== null || projection.thread.projectId !== input.projectId) {
       return;
