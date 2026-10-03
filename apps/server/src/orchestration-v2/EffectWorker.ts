@@ -430,17 +430,37 @@ export const executorLayer: Layer.Layer<
                   }),
               ),
             );
-          case "checkpoint.cleanup":
-            return resourceCleanup.cleanupCheckpointRefs(effect.request.targets).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
+          case "checkpoint.cleanup": {
+            // A failed attempt is usually a Git lock held by the user's own
+            // fetch or by a crashed process, so the outbox retries. When the
+            // last attempt also fails the refs stay behind, which is exactly
+            // what happened to every deleted thread before this effect existed.
+            // A failed row would only block the thread's worktree removal, so
+            // the effect settles as succeeded and logs what it left. There is
+            // no deferred retry yet; a safe one needs deleted-thread tombstones.
+            const targets = effect.request.targets;
+            return resourceCleanup.cleanupCheckpointRefs(targets).pipe(
+              willRetry
+                ? Effect.mapError(
+                    (cause) =>
+                      new OrchestrationEffectExecutionError({
+                        effectId: effect.id,
+                        effectType: effect.request.type,
+                        cause,
+                      }),
+                  )
+                : Effect.catch((error) =>
+                    Effect.logWarning("Checkpoint refs were left behind for a deleted thread", {
+                      threadId: effect.threadId,
+                      cwd: error.cwd,
+                      checkpointRefCount: targets
+                        .filter((target) => target.cwd === error.cwd)
+                        .reduce((count, target) => count + target.checkpointRefs.length, 0),
+                      error,
+                    }),
+                  ),
             );
+          }
           case "thread-title.generate":
             return threadTitleRegeneration
               .execute({

@@ -7,6 +7,7 @@ import { CheckpointRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -95,6 +96,61 @@ it.layer(TestLayer)("ResourceCleanupService.cleanupCheckpointRefs", (it) => {
         { cwd: repo, checkpointRefs: [ref("deleted/ordinal/0")] },
       ]);
       assert.strictEqual(yield* listCheckpointRefs(repo), "");
+    }),
+  );
+
+  it.effect("fails on a held lock after trying every target, and a retry finishes the job", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const locked = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cleanup-locked-" });
+      yield* initRepo(locked);
+      yield* git(locked, ["update-ref", ref("deleted/ordinal/0"), "HEAD"]);
+      const lockPath = NodePath.join(locked, ".git", `${ref("deleted/ordinal/0")}.lock`);
+      yield* fileSystem.writeFileString(lockPath, "");
+      const free = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cleanup-free-" });
+      yield* initRepo(free);
+      yield* git(free, ["update-ref", ref("deleted/ordinal/0"), "HEAD"]);
+      const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
+      const targets = [
+        { cwd: locked, checkpointRefs: [ref("deleted/ordinal/0")] },
+        { cwd: free, checkpointRefs: [ref("deleted/ordinal/0")] },
+      ];
+
+      const result = yield* Effect.result(cleanup.cleanupCheckpointRefs(targets));
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.operation, "checkpoint");
+        assert.strictEqual(result.failure.cwd, locked);
+      }
+      assert.strictEqual(yield* listCheckpointRefs(locked), ref("deleted/ordinal/0"));
+      assert.strictEqual(yield* listCheckpointRefs(free), "");
+
+      yield* fileSystem.remove(lockPath);
+      yield* cleanup.cleanupCheckpointRefs(targets);
+      assert.strictEqual(yield* listCheckpointRefs(locked), "");
+    }),
+  );
+
+  it.effect("never deletes refs outside the checkpoint namespace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cleanup-guard-" });
+      yield* initRepo(cwd);
+      yield* git(cwd, ["branch", "victim"]);
+      yield* git(cwd, ["update-ref", ref("deleted/ordinal/0"), "HEAD"]);
+      const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
+      yield* cleanup.cleanupCheckpointRefs([
+        {
+          cwd,
+          checkpointRefs: [CheckpointRef.make("refs/heads/victim"), ref("deleted/ordinal/0")],
+        },
+        { cwd, checkpointRefs: [CheckpointRef.make("refs/heads/victim")] },
+      ]);
+      assert.strictEqual(yield* listCheckpointRefs(cwd), "");
+      assert.strictEqual(
+        yield* git(cwd, ["rev-parse", "--verify", "refs/heads/victim"]),
+        yield* git(cwd, ["rev-parse", "HEAD"]),
+      );
     }),
   );
 });

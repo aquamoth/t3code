@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
@@ -33,8 +34,10 @@ export class ResourceCleanupService extends Context.Reference<{
   ) => Effect.Effect<void, ResourceCleanupError>;
   /**
    * Delete a deleted thread's checkpoint refs from each repository that holds
-   * them. A target whose directory is gone or is no longer a repository is
-   * skipped: the refs went with it, or were never ours to touch.
+   * them. A target whose directory is gone or is no longer a Git repository is
+   * skipped: the refs went with it, or were never ours to touch. Every target
+   * is attempted before the first failure is raised, so a retry only has the
+   * remaining refs left to delete.
    */
   readonly cleanupCheckpointRefs: (
     targets: ReadonlyArray<CheckpointCleanupTarget>,
@@ -54,6 +57,21 @@ export const live = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const config = yield* ServerConfig.ServerConfig;
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
+    const cleanupCheckpointTarget = (target: CheckpointCleanupTarget) =>
+      Effect.gen(function* () {
+        const isRepository = yield* checkpointStore
+          .isGitRepository(target.cwd)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (!isRepository) return;
+        yield* checkpointStore.deleteCheckpointRefs(target).pipe(
+          // A project pinned to another VCS holds no refs of ours.
+          Effect.catchTag("VcsUnsupportedOperationError", () => Effect.void),
+        );
+      }).pipe(
+        Effect.mapError(
+          (cause) => new ResourceCleanupError({ operation: "checkpoint", cwd: target.cwd, cause }),
+        ),
+      );
     return {
       cleanupTerminals: (threadId: string) =>
         terminals
@@ -85,23 +103,14 @@ export const live = Layer.effect(
           { discard: true, concurrency: 4 },
         ),
       cleanupCheckpointRefs: (targets) =>
-        Effect.forEach(
-          targets,
-          (target) =>
-            Effect.gen(function* () {
-              const isRepository = yield* checkpointStore
-                .isGitRepository(target.cwd)
-                .pipe(Effect.orElseSucceed(() => false));
-              if (!isRepository) return;
-              yield* checkpointStore.deleteCheckpointRefs(target);
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ResourceCleanupError({ operation: "checkpoint", cwd: target.cwd, cause }),
-              ),
-            ),
-          { discard: true },
-        ),
+        Effect.gen(function* () {
+          const failures: Array<ResourceCleanupError> = [];
+          for (const target of targets) {
+            const result = yield* Effect.result(cleanupCheckpointTarget(target));
+            if (Result.isFailure(result)) failures.push(result.failure);
+          }
+          if (failures[0] !== undefined) return yield* failures[0];
+        }),
     };
   }),
 );
