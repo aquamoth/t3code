@@ -161,11 +161,17 @@ it.layer(TestLayer)("ResourceCleanupService.cleanupCheckpointRefs", (it) => {
       yield* initRepo(cwd);
       yield* git(cwd, ["branch", "victim"]);
       yield* git(cwd, ["update-ref", ref("deleted/ordinal/0"), "HEAD"]);
+      // A symbolic ref planted in our namespace must go, not the branch it points at.
+      yield* git(cwd, ["symbolic-ref", ref("deleted/ordinal/1"), "refs/heads/victim"]);
       const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
       yield* cleanup.cleanupCheckpointRefs([
         {
           cwd,
-          checkpointRefs: [CheckpointRef.make("refs/heads/victim"), ref("deleted/ordinal/0")],
+          checkpointRefs: [
+            CheckpointRef.make("refs/heads/victim"),
+            ref("deleted/ordinal/0"),
+            ref("deleted/ordinal/1"),
+          ],
         },
         { cwd, checkpointRefs: [CheckpointRef.make("refs/heads/victim")] },
       ]);

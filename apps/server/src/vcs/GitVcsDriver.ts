@@ -1220,11 +1220,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         // One transaction per call takes the packed-refs lock once, so a held
         // lock costs one timeout per call instead of one per ref. Deleting a
         // missing ref is a no-op; any other non-zero exit, such as a lock, fails
-        // the whole batch and the caller decides whether to retry.
+        // the whole batch and the caller decides whether to retry. Without
+        // --no-deref, Git deletes the target of a symbolic ref instead of the
+        // ref itself, so a symbolic ref planted in our namespace could delete a
+        // branch.
         yield* execute({
           operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
           cwd: input.cwd,
-          args: [...durableWrite, "update-ref", "-z", "--stdin"],
+          args: [...durableWrite, "update-ref", "--no-deref", "-z", "--stdin"],
           stdin: checkpointRefs.map((checkpointRef) => `delete ${checkpointRef}\0\0`).join(""),
         });
       },
