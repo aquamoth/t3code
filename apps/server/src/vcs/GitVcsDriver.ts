@@ -1217,10 +1217,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       function* (input) {
         const checkpointRefs = input.checkpointRefs.filter(isCheckpointRefName);
         if (checkpointRefs.length === 0) return;
-        // One transaction takes the packed-refs lock once, so a held lock costs
-        // one timeout instead of one per ref. Deleting a missing ref is a no-op;
-        // any other non-zero exit, such as a lock, fails the whole batch and the
-        // caller decides whether to retry.
+        // One transaction per call takes the packed-refs lock once, so a held
+        // lock costs one timeout per call instead of one per ref. Deleting a
+        // missing ref is a no-op; any other non-zero exit, such as a lock, fails
+        // the whole batch and the caller decides whether to retry.
         yield* execute({
           operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
           cwd: input.cwd,

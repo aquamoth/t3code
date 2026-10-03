@@ -11,7 +11,7 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
-export interface CheckpointCleanupTarget {
+interface CheckpointCleanupTarget {
   readonly cwd: string;
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
@@ -59,10 +59,10 @@ export const live = Layer.effect(
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
     const cleanupCheckpointTarget = (target: CheckpointCleanupTarget) =>
       Effect.gen(function* () {
-        const isRepository = yield* checkpointStore
-          .isGitRepository(target.cwd)
-          .pipe(Effect.orElseSucceed(() => false));
-        if (!isRepository) return;
+        // A removed worktree is the expected miss. Any other detection failure,
+        // such as a Git timeout, is a real failure and goes through the retry.
+        if (!(yield* fileSystem.exists(target.cwd))) return;
+        if (!(yield* checkpointStore.isGitRepository(target.cwd))) return;
         yield* checkpointStore.deleteCheckpointRefs(target).pipe(
           // A project pinned to another VCS holds no refs of ours.
           Effect.catchTag("VcsUnsupportedOperationError", () => Effect.void),
@@ -108,6 +108,14 @@ export const live = Layer.effect(
           for (const target of targets) {
             const result = yield* Effect.result(cleanupCheckpointTarget(target));
             if (Result.isFailure(result)) failures.push(result.failure);
+          }
+          // The caller sees and logs the first failure; the rest are logged here
+          // so no repository drops out of the record.
+          for (const failure of failures.slice(1)) {
+            yield* Effect.logWarning("Checkpoint cleanup failed in another repository", {
+              cwd: failure.cwd,
+              error: failure,
+            });
           }
           if (failures[0] !== undefined) return yield* failures[0];
         }),
