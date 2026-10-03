@@ -188,6 +188,7 @@ it.effect("cancels active work without reviving a run while disposing delegated 
       attachmentIds: projection.messages.flatMap((message) =>
         message.attachments.map((attachment) => attachment.id),
       ),
+      workspaceRoot: "/workspace",
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
     });
@@ -309,6 +310,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
       attachmentIds: projection.messages.flatMap((message) =>
         message.attachments.map((attachment) => attachment.id),
       ),
+      workspaceRoot: "/workspace",
       now: deletedAt,
       idAllocator: yield* IdAllocator.IdAllocatorV2,
     });
@@ -330,7 +332,9 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         { type: "terminal.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
         // Every recorded ref is listed once per repository cwd, whatever its
-        // status, and a checkpoint whose scope is unknown has no cwd to clean.
+        // status, and once more under the project root, which holds a worktree
+        // thread's refs after the worktree is gone. A checkpoint whose scope is
+        // unknown has no cwd to clean.
         {
           type: "checkpoint.cleanup",
           targets: [
@@ -339,6 +343,14 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
               checkpointRefs: [
                 CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/0"),
                 CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/1"),
+              ],
+            },
+            {
+              cwd: "/workspace",
+              checkpointRefs: [
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/0"),
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/1"),
+                CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/subagent/ordinal/0"),
               ],
             },
             {
@@ -351,5 +363,67 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         },
       ],
     );
+  }).pipe(Effect.provide(IdAllocator.layer)),
+);
+
+it.effect("lists a repository once when the project root is also a scope cwd", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const scopeId = CheckpointScopeId.make("checkpoint-scope:delete-plan:root");
+    const projection: OrchestrationV2ThreadProjection = {
+      ...base,
+      thread: { ...base.thread, worktreePath: null },
+      checkpointScopes: [
+        {
+          id: scopeId,
+          threadId,
+          runId: base.runs[0]!.id,
+          nodeId: base.runs[0]!.rootNodeId!,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/workspace",
+          createdAt,
+        },
+      ],
+      checkpoints: [0, 1].map((ordinal) => ({
+        id: CheckpointId.make(`checkpoint:delete-plan:root:${ordinal}`),
+        threadId,
+        scopeId,
+        runId: base.runs[0]!.id,
+        nodeId: base.runs[0]!.rootNodeId!,
+        parentCheckpointId: null,
+        ordinalWithinScope: ordinal,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make(`refs/t3/orchestration-v2/checkpoints/root/ordinal/${ordinal}`),
+        status: "ready",
+        files: [],
+        capturedAt: createdAt,
+      })),
+    };
+    const plan = yield* planThreadDeletion({
+      command,
+      projection,
+      attachmentIds: [],
+      workspaceRoot: "/workspace",
+      now: deletedAt,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+    });
+    const cleanup = plan.effects.find((effect) => effect.request.type === "checkpoint.cleanup");
+    assert.isDefined(cleanup);
+    assert.deepEqual(cleanup?.request, {
+      type: "checkpoint.cleanup",
+      targets: [
+        {
+          cwd: "/workspace",
+          checkpointRefs: [
+            CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/0"),
+            CheckpointRef.make("refs/t3/orchestration-v2/checkpoints/root/ordinal/1"),
+          ],
+        },
+      ],
+    });
   }).pipe(Effect.provide(IdAllocator.layer)),
 );

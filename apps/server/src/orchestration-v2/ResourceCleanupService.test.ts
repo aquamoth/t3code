@@ -99,6 +99,29 @@ it.layer(TestLayer)("ResourceCleanupService.cleanupCheckpointRefs", (it) => {
     }),
   );
 
+  it.effect("deletes a removed worktree's refs through the project root", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-cleanup-root-" });
+      yield* initRepo(root);
+      const worktree = NodePath.join(root, ".worktrees", "feature");
+      yield* git(root, ["worktree", "add", "-b", "feature", worktree]);
+      yield* git(worktree, ["update-ref", ref("deleted/ordinal/0"), "HEAD"]);
+      yield* git(root, ["update-ref", ref("kept/ordinal/0"), "HEAD"]);
+      assert.strictEqual(
+        yield* listCheckpointRefs(root),
+        [ref("deleted/ordinal/0"), ref("kept/ordinal/0")].join("\n"),
+      );
+      yield* git(root, ["worktree", "remove", "--force", worktree]);
+      const cleanup = yield* ResourceCleanupService.ResourceCleanupService;
+      yield* cleanup.cleanupCheckpointRefs([
+        { cwd: worktree, checkpointRefs: [ref("deleted/ordinal/0")] },
+        { cwd: root, checkpointRefs: [ref("deleted/ordinal/0")] },
+      ]);
+      assert.strictEqual(yield* listCheckpointRefs(root), ref("kept/ordinal/0"));
+    }),
+  );
+
   it.effect("fails on a held lock after trying every target, and a retry finishes the job", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

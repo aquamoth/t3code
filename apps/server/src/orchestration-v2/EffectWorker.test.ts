@@ -81,7 +81,7 @@ function restartEffect(
 function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
-  readonly resourceCleanup?: Layer.Layer<ResourceCleanupService.ResourceCleanupService>;
+  readonly resourceCleanup?: (typeof ResourceCleanupService.ResourceCleanupService)["Service"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -153,7 +153,14 @@ function makeExecutorLayer(input: {
         dependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
         ServerSettings.layerTest(),
-        input.resourceCleanup ?? Layer.empty,
+        Layer.succeed(
+          ResourceCleanupService.ResourceCleanupService,
+          input.resourceCleanup ?? {
+            cleanupTerminals: () => Effect.void,
+            cleanupAttachments: () => Effect.void,
+            cleanupCheckpointRefs: () => Effect.void,
+          },
+        ),
       ),
     ),
   );
@@ -749,7 +756,7 @@ it.effect("checkpoint cleanup fails while a retry follows and settles on the las
     };
     const layer = makeExecutorLayer({
       events: yield* Ref.make<ReadonlyArray<string>>([]),
-      resourceCleanup: Layer.succeed(ResourceCleanupService.ResourceCleanupService, {
+      resourceCleanup: {
         cleanupTerminals: () => Effect.void,
         cleanupAttachments: () => Effect.void,
         cleanupCheckpointRefs: () =>
@@ -762,19 +769,19 @@ it.effect("checkpoint cleanup fails while a retry follows and settles on the las
               }),
             ),
           ),
-      }),
+      },
     });
 
     const exits = yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
-      return [
-        yield* Effect.exit(executor.execute(effect, { willRetry: true })),
-        yield* Effect.exit(executor.execute(effect, { willRetry: false })),
-      ];
+      return {
+        retrying: yield* Effect.exit(executor.execute(effect, { willRetry: true })),
+        last: yield* Effect.exit(executor.execute(effect, { willRetry: false })),
+      };
     }).pipe(Effect.provide(layer));
 
-    assert.isTrue(Exit.isFailure(exits[0]));
-    assert.isTrue(Exit.isSuccess(exits[1]));
+    assert.isTrue(Exit.isFailure(exits.retrying));
+    assert.isTrue(Exit.isSuccess(exits.last));
     assert.equal(yield* Ref.get(attempts), 2);
   }),
 );

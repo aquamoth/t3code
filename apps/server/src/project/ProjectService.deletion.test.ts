@@ -461,6 +461,7 @@ it.effect("deletes a project without force once its imported threads were delete
           "checkpoints",
         ]),
         attachmentIds: [],
+        workspaceRoot: null,
         now,
         idAllocator,
       });

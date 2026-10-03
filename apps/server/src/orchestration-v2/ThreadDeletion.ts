@@ -31,6 +31,8 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     | "checkpoints"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
+  /** The owning project's root, or null when the project is unknown. */
+  readonly workspaceRoot: string | null;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocatorV2Error> {
@@ -234,15 +236,23 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     });
   }
   // Checkpoint refs live in the repository, not the thread, so nothing else
-  // removes them. Group by scope cwd: a worktree thread's refs are shared with
-  // the project repository, and the worktree outlives every queued effect.
+  // removes them. Each scope cwd is a target, and so is the project root with
+  // every ref: a worktree shares its refs with the project repository and is
+  // often removed first, by storage cleanup or by hand. Ref names derive from
+  // this thread's scope ids, so a repository that never held them deletes
+  // nothing, and no other thread's refs can match.
+  const scopeCwdById = new Map(projection.checkpointScopes.map((scope) => [scope.id, scope.cwd]));
   const checkpointRefsByCwd = new Map<string, Set<CheckpointRef>>();
+  const addTarget = (cwd: string, ref: CheckpointRef) => {
+    const refs = checkpointRefsByCwd.get(cwd) ?? new Set<CheckpointRef>();
+    refs.add(ref);
+    checkpointRefsByCwd.set(cwd, refs);
+  };
   for (const checkpoint of projection.checkpoints) {
-    const scope = projection.checkpointScopes.find((entry) => entry.id === checkpoint.scopeId);
-    if (scope === undefined) continue;
-    const refs = checkpointRefsByCwd.get(scope.cwd) ?? new Set<CheckpointRef>();
-    refs.add(checkpoint.ref);
-    checkpointRefsByCwd.set(scope.cwd, refs);
+    const cwd = scopeCwdById.get(checkpoint.scopeId);
+    if (cwd === undefined) continue;
+    addTarget(cwd, checkpoint.ref);
+    if (input.workspaceRoot !== null) addTarget(input.workspaceRoot, checkpoint.ref);
   }
   if (checkpointRefsByCwd.size > 0) {
     effects.push({
