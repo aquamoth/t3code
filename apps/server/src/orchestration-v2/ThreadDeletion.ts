@@ -1,5 +1,4 @@
 import type {
-  CheckpointRef,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
@@ -20,19 +19,9 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    | "thread"
-    | "runs"
-    | "attempts"
-    | "nodes"
-    | "runtimeRequests"
-    | "subagents"
-    | "providerSessions"
-    | "checkpointScopes"
-    | "checkpoints"
+    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
-  /** The owning project's root, or null when the project is unknown. */
-  readonly workspaceRoot: string | null;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocatorV2Error> {
@@ -236,37 +225,14 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     });
   }
   // Checkpoint refs live in the repository, not the thread, so nothing else
-  // removes them. Each scope cwd is a target, and so is the project root with
-  // every ref: a worktree shares its refs with the project repository and is
-  // often removed first, by storage cleanup or by hand. Ref names derive from
-  // this thread's scope ids, so a repository that never held them deletes
-  // nothing, and no other thread's refs can match.
-  const scopeCwdById = new Map(projection.checkpointScopes.map((scope) => [scope.id, scope.cwd]));
-  const checkpointRefsByCwd = new Map<string, Set<CheckpointRef>>();
-  const addTarget = (cwd: string, ref: CheckpointRef) => {
-    const refs = checkpointRefsByCwd.get(cwd) ?? new Set<CheckpointRef>();
-    refs.add(ref);
-    checkpointRefsByCwd.set(cwd, refs);
-  };
-  for (const checkpoint of projection.checkpoints) {
-    const cwd = scopeCwdById.get(checkpoint.scopeId);
-    if (cwd === undefined) continue;
-    addTarget(cwd, checkpoint.ref);
-    if (input.workspaceRoot !== null) addTarget(input.workspaceRoot, checkpoint.ref);
-  }
-  if (checkpointRefsByCwd.size > 0) {
-    effects.push({
-      id: `effect:${command.commandId}:checkpoint.cleanup`,
-      commandId: command.commandId,
-      threadId: command.threadId,
-      request: {
-        type: "checkpoint.cleanup",
-        targets: [...checkpointRefsByCwd].map(([cwd, refs]) => ({
-          cwd,
-          checkpointRefs: [...refs],
-        })),
-      },
-    });
-  }
+  // removes them. The effect reads the thread's recorded refs when it runs,
+  // after any capture queued ahead of it in the thread's lane, so a checkpoint
+  // captured for a cancelled run is removed too.
+  effects.push({
+    id: `effect:${command.commandId}:checkpoint.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "checkpoint.cleanup" },
+  });
   return { events, effects };
 });

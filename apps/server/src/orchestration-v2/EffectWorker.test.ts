@@ -1,6 +1,5 @@
 import { assert, it } from "@effect/vitest";
 import {
-  CheckpointRef,
   CommandId,
   ProviderSessionId,
   ProviderThreadId,
@@ -740,10 +739,7 @@ it.effect("checkpoint cleanup fails while a retry follows and settles on the las
       id: "effect:checkpoint-cleanup",
       commandId: CommandId.make("command:checkpoint-cleanup"),
       threadId,
-      request: {
-        type: "checkpoint.cleanup",
-        targets: [{ cwd: "/repo", checkpointRefs: [CheckpointRef.make("refs/t3/x/ordinal/0")] }],
-      },
+      request: { type: "checkpoint.cleanup" },
       status: "running",
       attemptCount: 1,
       availableAt: now,

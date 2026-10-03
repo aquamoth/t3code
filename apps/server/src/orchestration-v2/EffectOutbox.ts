@@ -1,6 +1,5 @@
 import {
   CheckpointId,
-  CheckpointRef,
   CheckpointScopeId,
   CommandId,
   MessageId,
@@ -96,12 +95,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
-  Schema.Struct({
-    type: Schema.Literal("checkpoint.cleanup"),
-    targets: Schema.Array(
-      Schema.Struct({ cwd: Schema.String, checkpointRefs: Schema.Array(CheckpointRef) }),
-    ),
-  }),
+  Schema.Struct({ type: Schema.Literal("checkpoint.cleanup") }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([

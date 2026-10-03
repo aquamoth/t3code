@@ -438,8 +438,7 @@ export const executorLayer: Layer.Layer<
             // A failed row would only block the thread's worktree removal, so
             // the effect settles as succeeded and logs what it left. There is
             // no deferred retry yet; a safe one needs deleted-thread tombstones.
-            const targets = effect.request.targets;
-            return resourceCleanup.cleanupCheckpointRefs(targets).pipe(
+            return resourceCleanup.cleanupCheckpointRefs(effect.threadId).pipe(
               willRetry
                 ? Effect.mapError(
                     (cause) =>
@@ -453,9 +452,6 @@ export const executorLayer: Layer.Layer<
                     Effect.logWarning("Checkpoint refs were left behind for a deleted thread", {
                       threadId: effect.threadId,
                       cwd: error.cwd,
-                      checkpointRefCount: targets
-                        .filter((target) => target.cwd === error.cwd)
-                        .reduce((count, target) => count + target.checkpointRefs.length, 0),
                       error,
                     }),
                   ),

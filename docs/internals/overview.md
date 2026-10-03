@@ -85,7 +85,10 @@ workspace state with the provider conversation. A provider that cannot roll back
 must reject that operation before changing the filesystem. Deleting a thread queues a
 [checkpoint cleanup effect](../../apps/server/src/orchestration-v2/ResourceCleanupService.ts) that
 removes the thread's refs in one Git transaction per target directory, so a held lock costs one
-timeout per target rather than one per ref. The project root is always a target: a worktree shares its refs with the project repository and is often removed before the
+timeout per target rather than one per ref. The effect reads the recorded refs when it runs, after
+any capture queued ahead of it in the thread's lane, and a capture that starts after deletion
+writes nothing, so the checkpoint of a cancelled run cannot slip past it. The project root is
+always a target: a worktree shares its refs with the project repository and is often removed before the
 thread is, and ref names derive from the thread's own scope ids, so no other thread's refs can be
 touched. The effect retries through the outbox, and when the last attempt still fails, usually on a held Git lock, the effect settles as
 succeeded and logs the refs it left behind. That is the state every deleted thread was in before

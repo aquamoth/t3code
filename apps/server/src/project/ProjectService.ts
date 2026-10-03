@@ -403,7 +403,6 @@ export const make = Effect.gen(function* () {
   /** Delete one child thread durably; a stable command id makes a retry resume the cascade. */
   const deleteChildThread = Effect.fn("ProjectService.deleteChildThread")(function* (
     input: ProjectDeleteInput,
-    workspaceRoot: string,
     threadId: ThreadId,
   ) {
     yield* legacyImporter.ensureTranscript(threadId);
@@ -414,8 +413,6 @@ export const make = Effect.gen(function* () {
       "runtimeRequests",
       "subagents",
       "providerSessions",
-      "checkpointScopes",
-      "checkpoints",
     ]);
     if (projection.thread.deletedAt !== null || projection.thread.projectId !== input.projectId) {
       return;
@@ -430,7 +427,6 @@ export const make = Effect.gen(function* () {
       command,
       projection,
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
-      workspaceRoot,
       now,
       idAllocator,
     });
@@ -458,7 +454,6 @@ export const make = Effect.gen(function* () {
   /** Refuse a non-empty project without force, else delete its live threads first. */
   const deleteChildThreads = Effect.fn("ProjectService.deleteChildThreads")(function* (
     input: ProjectDeleteInput,
-    workspaceRoot: string,
   ) {
     const { projectId } = input;
     // The V2 shell is the only record of which threads are live.
@@ -480,7 +475,7 @@ export const make = Effect.gen(function* () {
       projectThreads,
       (thread) =>
         threadCommands
-          .withLock(thread.id, deleteChildThread(input, workspaceRoot, thread.id))
+          .withLock(thread.id, deleteChildThread(input, thread.id))
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -502,7 +497,7 @@ export const make = Effect.gen(function* () {
       }
 
       if (existing.value.deletedAt === null) {
-        yield* deleteChildThreads(input, existing.value.workspaceRoot);
+        yield* deleteChildThreads(input);
       }
       yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
       yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);

@@ -9074,17 +9074,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "runtimeRequests",
             "subagents",
             "providerSessions",
-            "checkpointScopes",
-            "checkpoints",
           ])
           .pipe(
             Effect.mapError(
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        const project = yield* projects
-          .get(projection.thread.projectId, { includeDeleted: true })
-          .pipe(mapDispatchError(command));
         return yield* mapDispatchError(command)(
           planThreadDeletion({
             command,
@@ -9092,7 +9087,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),
-            workspaceRoot: Option.isSome(project) ? project.value.workspaceRoot : null,
             now: yield* DateTime.now,
             idAllocator,
           }),
